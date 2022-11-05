@@ -1,0 +1,5 @@
+requests
+icalendar
+flask
+flask-restful
+diskcache
