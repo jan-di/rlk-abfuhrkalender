@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta
 import logging
 import hashlib
+import re
 import requests
 from icalendar import Calendar, Event, Alarm
 from diskcache import Cache
@@ -14,7 +15,7 @@ class RLKA():
         ical = self.cache.get(f'{place}-{street}', default=None)
         if ical is None:
             ical = self.fetch_ical(place=place, street=street)
-            self.cache.set(f'{place}-{street}', ical, expire=3600)
+            # self.cache.set(f'{place}-{street}', ical, expire=3600)
 
         return ical
 
@@ -24,6 +25,7 @@ class RLKA():
         now = datetime.now()
         alarm_delta = timedelta(hours=-18)
         logging.info(f"Fetching events for place {place}, street {street}..")
+        time_regex = re.compile(r'^(\d+):(\d+)-(\d+):(\d+)\s.*$')
 
         src_events = []
         for year in range(now.year - 1, now.year + 2):
@@ -53,6 +55,7 @@ class RLKA():
             create_alarm = True
             summary_prefix = ""
             alarm_description = ""
+            time_match = None
 
             match src_event['summary']:
                 case "Altpapier":
@@ -74,12 +77,30 @@ class RLKA():
             uid = f"{src_event['summary'].lower()}-{place}-{street}-{year}-{src_event['dtstart'].to_ical().decode('utf-8')}"
             if 'description' in src_event:
                 uid += f"-{src_event['description'].lower()}"
+                time_match = time_regex.match(src_event['description'])
+
             uid = hashlib.md5(uid.encode()).hexdigest()
 
             event = Event()
-            for prop in ['dtstart', 'dtend', 'location', 'description']:
+            for prop in ['location', 'description']:
                 if prop in src_event:
                     event.add(prop, src_event[prop])
+
+            dtstart = src_event['dtstart'].dt
+            dtend = src_event['dtend'].dt
+
+            if time_match is not None:
+                dtstart = datetime.combine(
+                    src_event['dtstart'].dt, datetime.min.time())
+                dtstart = dtstart.replace(
+                    hour=int(time_match.group(1)), minute=int(time_match.group(2)))
+                dtend = datetime.combine(
+                    src_event['dtend'].dt - timedelta(days=1), datetime.min.time())
+                dtend = dtend.replace(
+                    hour=int(time_match.group(3)), minute=int(time_match.group(4)))
+
+            event.add('dtstart', dtstart)
+            event.add('dtend', dtend)
             event.add('summary', f"{summary_prefix}{src_event['summary']}")
             event.add('transp', 'TRANSPARENT')
             event.add('uid', uid)
